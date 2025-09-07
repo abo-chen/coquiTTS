@@ -7,6 +7,15 @@ import torch
 
 from TTS.utils.generic_utils import get_user_data_dir
 
+# Fix for PyTorch 2.6+ weights_only security
+import torch.serialization
+torch.serialization.add_safe_globals([
+    "TTS.tts.configs.xtts_config.XttsConfig",
+    "TTS.config.shared_configs.BaseDatasetConfig",
+    "TTS.config.shared_configs.BaseAudioConfig", 
+    "TTS.config.shared_configs.CharactersConfig"
+])
+
 
 class RenamingUnpickler(pickle_tts.Unpickler):
     """Overload default pickler to solve module renaming problem"""
@@ -48,10 +57,10 @@ def load_fsspec(
             filecache={"cache_storage": str(get_user_data_dir("tts_cache"))},
             mode="rb",
         ) as f:
-            return torch.load(f, map_location=map_location, **kwargs)
+            return torch.load(f, map_location=map_location, weights_only=False, **kwargs)
     else:
         with fsspec.open(path, "rb") as f:
-            return torch.load(f, map_location=map_location, **kwargs)
+            return torch.load(f, map_location=map_location, weights_only=False, **kwargs)
 
 
 def load_checkpoint(

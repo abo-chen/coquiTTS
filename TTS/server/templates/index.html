@@ -26,12 +26,83 @@
                 padding-top: 56px;
             }
         }
+        
+        textarea#text {
+            width: 100%;
+            max-width: 800px;
+            min-height: 150px;
+            resize: vertical;
+            font-size: 16px;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            margin-bottom: 10px;
+        }
+        
+        .control-group {
+            margin: 15px 0;
+        }
+        
+        select {
+            padding: 5px 10px;
+            font-size: 14px;
+            border-radius: 4px;
+            border: 1px solid #ccc;
+            margin-left: 10px;
+        }
+        
+        select:disabled {
+            background-color: #f0f0f0;
+            color: #999;
+            cursor: not-allowed;
+        }
+        
+        label {
+            font-weight: bold;
+            margin-right: 5px;
+        }
+        
+        .voice-option {
+            padding: 15px;
+            margin: 10px 0;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            background-color: #f9f9f9;
+        }
+        
+        .voice-option.active {
+            border-color: #007bff;
+            background-color: #f0f8ff;
+        }
+        
+        .or-divider {
+            text-align: center;
+            margin: 20px 0;
+            position: relative;
+        }
+        
+        .or-divider::before {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 0;
+            right: 0;
+            height: 1px;
+            background: #ddd;
+        }
+        
+        .or-divider span {
+            background: white;
+            padding: 0 15px;
+            position: relative;
+            font-weight: bold;
+            color: #666;
+        }
     </style>
 </head>
 
 <body>
-    <a href="https://github.com/coqui-ai/TTS"><img style="position: absolute; z-index:1000; top: 0; left: 0; border: 0;"
-            src="https://s3.amazonaws.com/github/ribbons/forkme_left_darkblue_121621.png" alt="Fork me on GitHub"></a>
+
 
     <!-- Navigation -->
     <!--
@@ -65,30 +136,170 @@
                 </ul>
 
                 {%if use_gst%}
-                <input value='{"0": 0.1}' id="style_wav" placeholder="style wav (dict or path to wav).." size=45
-                    type="text" name="style_wav">
+                <div class="control-group">
+                    <input value='{"0": 0.1}' id="style_wav" placeholder="style wav (dict or path to wav).." size=45
+                        type="text" name="style_wav">
+                </div>
                 {%endif%}
 
-                <input id="text" placeholder="Type here..." size=45 type="text" name="text">
-                <button id="speak-button" name="speak">Speak</button><br /><br />
+                <!-- Text input area -->
+                <div class="control-group">
+                    <textarea id="text" placeholder="Enter your text here... (支持中文、English、etc.)" name="text"></textarea>
+                </div>
 
-                {%if use_multi_speaker%}
-                Choose a speaker:
-                <select id="speaker_id" name=speaker_id method="GET" action="/">
-                    {% for speaker_id in speaker_ids %}
-                    <option value="{{speaker_id}}" SELECTED>{{speaker_id}}</option>"
-                    {% endfor %}
-                </select><br /><br />
+                <!-- Voice Selection Section - Show different controls based on model type -->
+                {%if is_xtts%}
+                    <!-- XTTS: Show full voice selection with speaker and cloning options -->
+                    <div style="background: #f5f5f5; padding: 20px; border-radius: 8px; margin: 20px auto; max-width: 800px; width: 100%;">
+                        <h5 style="margin-top: 0; text-align: center;">Voice Selection (Choose One) - XTTS Model</h5>
+                        
+                        <div style="display: flex; gap: 20px; align-items: stretch;">
+                            <!-- Option 1: Preset Speaker -->
+                            <div class="voice-option" id="preset-voice-option" style="flex: 1;">
+                                <label for="speaker_id">🎭 Option 1: Use Preset Speaker</label>
+                                <select id="speaker_id" name="speaker_id" style="display: block; margin-top: 10px; width: 92%;">
+                                    {%if use_multi_speaker and speaker_ids%}
+                                        {% for speaker_id in speaker_ids %}
+                                        <option value="{{speaker_id}}" {{'selected' if speaker_id == 'Suad Qasim' else ''}}>{{speaker_id}}</option>
+                                        {% endfor %}
+                                    {%else%}
+                                        <!-- Default XTTS speakers if not dynamically loaded -->
+                                        <option value="Claribel Dervla">Claribel Dervla</option>
+                                        <option value="Daisy Studious">Daisy Studious</option>
+                                        <option value="Gracie Wise">Gracie Wise</option>
+                                        <option value="Tanja Adelina">Tanja Adelina</option>
+                                        <option value="Chandra MacFarland">Chandra MacFarland</option>
+                                        <option value="Alexandra Hisakawa">Alexandra Hisakawa</option>
+                                        <option value="Tammie Ema">Tammie Ema</option>
+                                        <option value="Alison Dietlinde">Alison Dietlinde</option>
+                                        <option value="Ana Florence">Ana Florence</option>
+                                        <option value="Suad Qasim" selected>Suad Qasim</option>
+                                        <option value="Uta Obando">Uta Obando</option>
+                                        <option value="Zofija Kendrick">Zofija Kendrick</option>
+                                        <option value="Rosemary Okafor">Rosemary Okafor</option>
+                                        <option value="Andrew Chipper">Andrew Chipper</option>
+                                        <option value="Nova Hogarth">Nova Hogarth</option>
+                                        <option value="Maja Ruoho">Maja Ruoho</option>
+                                        <option value="Narelle Moon">Narelle Moon</option>
+                                        <option value="Craig Gutsy">Craig Gutsy</option>
+                                        <option value="Damien Black">Damien Black</option>
+                                        <option value="Dionisio Schuyler">Dionisio Schuyler</option>
+                                        <option value="Royston Min">Royston Min</option>
+                                        <option value="Ige Behringer">Ige Behringer</option>
+                                        <option value="Filip Traverse">Filip Traverse</option>
+                                        <option value="Kumar Dahl">Kumar Dahl</option>
+                                    {%endif%}
+                                </select>
+                            </div>
+                            
+                            <div style="display: flex; align-items: center; padding: 0 10px;">
+                                <span style="font-weight: bold; color: #666;">OR</span>
+                            </div>
+                            
+                            <!-- Option 2: Voice Cloning -->
+                            <div class="voice-option" id="clone-voice-option" style="flex: 1;">
+                                <label for="speaker_wav">🎤 Option 2: Clone a Voice</label>
+                                <input type="file" id="speaker_wav" name="speaker_wav" accept="audio/wav,audio/mpeg,audio/mp3" style="display: block; margin-top: 10px; width: 100%;" />
+                                <small style="display: block; color: #666; margin-top: 5px;">
+                                    Upload a 6–10 second WAV/MP3 speech sample.
+                                </small>
+                            </div>
+                        </div>
+                    </div>
+                {%elif is_vctk%}
+                    <!-- VCTK: Show only speaker selection -->
+                    <div style="background: #f5f5f5; padding: 20px; border-radius: 8px; margin: 20px auto; max-width: 800px; width: 100%;">
+                        <h5 style="margin-top: 0; text-align: center;">Speaker Selection - VCTK Model</h5>
+                        <div class="control-group">
+                            <label for="speaker_id">🎭 Select Speaker:</label>
+                            <select id="speaker_id" name="speaker_id" style="display: block; margin-top: 10px; width: 92%; max-width: 400px;">
+                                {%if use_multi_speaker and speaker_ids%}
+                                    {% for speaker_id in speaker_ids %}
+                                    <option value="{{speaker_id}}">{{speaker_id}}</option>
+                                    {% endfor %}
+                                {%else%}
+                                    <option value="p225">p225</option>
+                                {%endif%}
+                            </select>
+                        </div>
+                        <!-- Hidden elements for VCTK -->
+                        <input type="file" id="speaker_wav" name="speaker_wav" style="display: none;" />
+                    </div>
+                {%elif is_ljspeech%}
+                    <!-- LJSpeech: No voice selection needed -->
+                    <div style="background: #f5f5f5; padding: 20px; border-radius: 8px; margin: 20px auto; max-width: 800px; width: 100%;">
+                        <h5 style="margin-top: 0; text-align: center;">LJSpeech Model - Single Speaker</h5>
+                        <p style="text-align: center; color: #666; margin: 0;">This model uses a fixed female voice (LJ Speech).</p>
+                        <!-- Hidden elements for LJSpeech -->
+                        <select id="speaker_id" name="speaker_id" style="display: none;">
+                            <option value="ljspeech" selected>ljspeech</option>
+                        </select>
+                        <input type="file" id="speaker_wav" name="speaker_wav" style="display: none;" />
+                    </div>
+                {%else%}
+                    <!-- Default: Show basic controls -->
+                    <div style="background: #f5f5f5; padding: 20px; border-radius: 8px; margin: 20px auto; max-width: 800px; width: 100%;">
+                        <h5 style="margin-top: 0; text-align: center;">Voice Selection</h5>
+                        <div class="control-group">
+                            <label for="speaker_id">Speaker:</label>
+                            <select id="speaker_id" name="speaker_id" style="display: block; margin-top: 10px; width: 92%; max-width: 400px;">
+                                {%if use_multi_speaker and speaker_ids%}
+                                    {% for speaker_id in speaker_ids %}
+                                    <option value="{{speaker_id}}">{{speaker_id}}</option>
+                                    {% endfor %}
+                                {%else%}
+                                    <option value="default">Default</option>
+                                {%endif%}
+                            </select>
+                        </div>
+                        <input type="file" id="speaker_wav" name="speaker_wav" style="display: none;" />
+                    </div>
                 {%endif%}
 
-                {%if use_multi_language%}
-                Choose a language:
-                <select id="language_id" name=language_id method="GET" action="/">
-                    {% for language_id in language_ids %}
-                    <option value="{{language_id}}" SELECTED>{{language_id}}</option>"
-                    {% endfor %}
-                </select><br /><br />
+                <!-- Show language selection only for XTTS -->
+                {%if is_xtts%}
+                <div class="control-group">
+                    <label for="language_id">Language:</label>
+                    <select id="language_id" name="language_id">
+                        {%if use_multi_language and language_ids%}
+                            {% for language_id in language_ids %}
+                            <option value="{{language_id}}" {{'selected' if language_id == 'zh-cn' else ''}}>{{language_id}}</option>
+                            {% endfor %}
+                        {%else%}
+                            <!-- Default XTTS languages if not dynamically loaded -->
+                            <option value="en">English</option>
+                            <option value="es">Español</option>
+                            <option value="fr">Français</option>
+                            <option value="de">Deutsch</option>
+                            <option value="it">Italiano</option>
+                            <option value="pt">Português</option>
+                            <option value="pl">Polski</option>
+                            <option value="tr">Türkçe</option>
+                            <option value="ru">Русский</option>
+                            <option value="nl">Nederlands</option>
+                            <option value="cs">Čeština</option>
+                            <option value="ar">العربية</option>
+                            <option value="zh-cn" selected>中文</option>
+                            <option value="ja">日本語</option>
+                            <option value="ko">한국어</option>
+                            <option value="hu">Magyar</option>
+                            <option value="hi">हिन्दी</option>
+                        {%endif%}
+                    </select>
+                </div>
+                {%else%}
+                <!-- Hidden language selection for non-XTTS models -->
+                <select id="language_id" name="language_id" style="display: none;">
+                    <option value="en" selected>en</option>
+                </select>
                 {%endif%}
+
+
+                <!-- Speak button -->
+                <div class="control-group">
+                    <button id="speak-button" class="btn btn-primary" name="speak">Speak</button>
+                    <button id="clear-button" class="btn btn-secondary" name="clear" style="margin-left: 10px;">Clear</button>
+                </div>
 
 
                 {%if show_details%}
@@ -97,6 +308,10 @@
                 {%endif%}
                 <audio id="audio" controls autoplay hidden></audio>
                 <p id="message"></p>
+                
+                <a href="https://github.com/coqui-ai/TTS">
+                    <img src="https://img.shields.io/badge/Fork%20me-GitHub-blue?logo=github" alt="Fork me on GitHub">
+                </a>
             </div>
         </div>
     </div>
@@ -112,26 +327,104 @@
         }
         function q(selector) { return document.querySelector(selector) }
         q('#text').focus()
+        
+        // Clear button functionality
+        q('#clear-button').addEventListener('click', function(e) {
+            q('#text').value = ''
+            q('#speaker_wav').value = ''
+            q('#audio').hidden = true
+            q('#message').textContent = ''
+            q('#speaker_id').disabled = false
+            updateVoiceSelection()
+            e.preventDefault()
+        })
+        
+        // Function to update voice selection visual feedback
+        function updateVoiceSelection() {
+            const hasFile = q('#speaker_wav') && q('#speaker_wav').files.length > 0
+            const presetOption = q('#preset-voice-option')
+            const cloneOption = q('#clone-voice-option')
+            
+            // Only apply visual feedback for XTTS model (which has both options)
+            if (presetOption && cloneOption) {
+                if (hasFile) {
+                    // Voice cloning mode
+                    q('#speaker_id').disabled = true
+                    presetOption.classList.remove('active')
+                    cloneOption.classList.add('active')
+                    q('#message').textContent = '🎤 Voice cloning mode active'
+                } else {
+                    // Preset speaker mode
+                    q('#speaker_id').disabled = false
+                    presetOption.classList.add('active')
+                    cloneOption.classList.remove('active')
+                    q('#message').textContent = ''
+                }
+            }
+        }
+        
+        // When file is selected, update UI (only for XTTS)
+        if (q('#speaker_wav')) {
+            q('#speaker_wav').addEventListener('change', updateVoiceSelection)
+        }
+        
+        // When speaker is changed, update UI
+        if (q('#speaker_id')) {
+            q('#speaker_id').addEventListener('change', updateVoiceSelection)
+        }
+        
+        // Initialize voice selection on page load
+        updateVoiceSelection()
+        
         function do_tts(e) {
             const text = q('#text').value
             const speaker_id = getTextValue('#speaker_id')
             const style_wav = getTextValue('#style_wav')
             const language_id = getTextValue('#language_id')
+            const speaker_wav_file = q('#speaker_wav').files[0]
+            
             if (text) {
                 q('#message').textContent = 'Synthesizing...'
                 q('#speak-button').disabled = true
                 q('#audio').hidden = true
-                synthesize(text, speaker_id, style_wav, language_id)
+                
+                // If a voice file is uploaded, use it for cloning
+                if (speaker_wav_file) {
+                    q('#message').textContent = 'Processing voice clone...'
+                    const formData = new FormData()
+                    formData.append('text', text)
+                    formData.append('language_id', language_id)
+                    formData.append('speaker_wav', speaker_wav_file)
+                    
+                    fetch('/api/tts_with_clone', {
+                        method: 'POST',
+                        body: formData
+                    })
+                    .then(function (res) {
+                        if (!res.ok) throw Error(res.statusText)
+                        return res.blob()
+                    }).then(function (blob) {
+                        q('#message').textContent = ''
+                        q('#speak-button').disabled = false
+                        q('#audio').src = URL.createObjectURL(blob)
+                        q('#audio').hidden = false
+                    }).catch(function (err) {
+                        q('#message').textContent = 'Error: ' + err.message
+                        q('#speak-button').disabled = false
+                    })
+                } else {
+                    // Use regular synthesis with selected speaker
+                    synthesize(text, speaker_id, style_wav, language_id)
+                }
             }
             e.preventDefault()
             return false
         }
+        
         q('#speak-button').addEventListener('click', do_tts)
-        q('#text').addEventListener('keyup', function (e) {
-            if (e.keyCode == 13) { // enter
-                do_tts(e)
-            }
-        })
+        // Remove enter key listener for textarea to allow multi-line input
+        // Users can click the Speak button instead
+        
         function synthesize(text, speaker_id = "", style_wav = "", language_id = "") {
             fetch(`/api/tts?text=${encodeURIComponent(text)}&speaker_id=${encodeURIComponent(speaker_id)}&style_wav=${encodeURIComponent(style_wav)}&language_id=${encodeURIComponent(language_id)}`, { cache: 'no-cache' })
                 .then(function (res) {

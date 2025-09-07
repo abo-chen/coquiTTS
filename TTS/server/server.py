@@ -149,6 +149,20 @@ def style_wav_uri_to_dict(style_wav: str) -> Union[str, dict]:
 
 @app.route("/")
 def index():
+    # 获取模型信息 - 优先检查config路径来识别XTTS模型
+    model_name = args.model_name if args.model_name else "custom"
+    
+    # 如果使用了自定义模型路径，通过config路径判断是否是XTTS
+    if args.model_path and args.config_path:
+        is_xtts = "xtts" in args.config_path.lower()
+        is_vctk = False
+        is_ljspeech = False
+    else:
+        # 使用预训练模型名称判断
+        is_xtts = "xtts" in model_name.lower() if model_name else False
+        is_vctk = "vctk" in model_name.lower() if model_name else False
+        is_ljspeech = "ljspeech" in model_name.lower() if model_name else False
+    
     return render_template(
         "index.html",
         show_details=args.show_details,
@@ -157,6 +171,10 @@ def index():
         speaker_ids=speaker_manager.name_to_id if speaker_manager is not None else None,
         language_ids=language_manager.name_to_id if language_manager is not None else None,
         use_gst=use_gst,
+        model_name=model_name,
+        is_xtts=is_xtts,
+        is_vctk=is_vctk,
+        is_ljspeech=is_ljspeech,
     )
 
 
@@ -200,10 +218,88 @@ def tts():
         print(f" > Model input: {text}")
         print(f" > Speaker Idx: {speaker_idx}")
         print(f" > Language Idx: {language_idx}")
-        wavs = synthesizer.tts(text, speaker_name=speaker_idx, language_name=language_idx, style_wav=style_wav)
+        print(f" > use_multi_speaker: {use_multi_speaker}")
+        print(f" > use_multi_language: {use_multi_language}")
+        
+        # 根据模型类型决定如何调用
+        # 检查是否是XTTS模型（通过config路径或者模型名称）
+        is_xtts_model = False
+        if args.model_path and args.config_path:
+            is_xtts_model = "xtts" in args.config_path.lower()
+        elif args.model_name:
+            is_xtts_model = "xtts" in args.model_name.lower()
+            
+        if is_xtts_model:
+            # XTTS模型 - 需要speaker和language参数（即使为空）
+            wavs = synthesizer.tts(text, speaker_name=speaker_idx, language_name=language_idx, style_wav=style_wav)
+        else:
+            # 其他模型 - 动态构建参数
+            tts_kwargs = {"text": text}
+            
+            # 只在多说话人模型且有speaker_idx时传递speaker参数
+            if use_multi_speaker and speaker_idx:
+                tts_kwargs["speaker_name"] = speaker_idx
+                
+            # 只在多语言模型且有language_idx时传递language参数
+            if use_multi_language and language_idx:
+                tts_kwargs["language_name"] = language_idx
+                
+            # style_wav可以总是传递（如果不为None）
+            if style_wav:
+                tts_kwargs["style_wav"] = style_wav
+            
+            wavs = synthesizer.tts(**tts_kwargs)
         out = io.BytesIO()
         synthesizer.save_wav(wavs, out)
     return send_file(out, mimetype="audio/wav")
+
+
+@app.route("/api/tts_with_clone", methods=["POST"])
+def tts_with_clone():
+    """TTS with voice cloning from uploaded audio file"""
+    with lock:
+        text = request.form.get("text", "")
+        language_idx = request.form.get("language_id", "en")
+        
+        # Get uploaded file
+        speaker_wav_file = request.files.get("speaker_wav")
+        
+        if not text:
+            return "No text provided", 400
+            
+        if not speaker_wav_file:
+            return "No audio file provided", 400
+        
+        # Save uploaded file temporarily
+        import tempfile
+        import os
+        
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp_file:
+            speaker_wav_file.save(tmp_file.name)
+            temp_filename = tmp_file.name
+        
+        try:
+            print(f" > Model input: {text}")
+            print(f" > Language: {language_idx}")
+            print(f" > Voice clone from: {speaker_wav_file.filename}")
+            
+            # Use the uploaded audio file for voice cloning
+            wavs = synthesizer.tts(
+                text=text, 
+                language_name=language_idx,
+                speaker_wav=temp_filename,  # Path to the uploaded audio file
+                speaker_name=None  # Don't use preset speaker when cloning
+            )
+            
+            out = io.BytesIO()
+            synthesizer.save_wav(wavs, out)
+            
+            return send_file(out, mimetype="audio/wav")
+            
+        finally:
+            # Clean up temporary file
+            if os.path.exists(temp_filename):
+                os.unlink(temp_filename)
 
 
 # Basic MaryTTS compatibility layer

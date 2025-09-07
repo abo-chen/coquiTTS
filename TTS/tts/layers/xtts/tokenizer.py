@@ -32,8 +32,21 @@ def get_spacy_lang(lang):
         return English()
 
 
-def split_sentence(text, lang, text_split_length=250):
-    """Preprocess the input text"""
+def split_sentence(text, lang, text_split_length=250, enable_enhanced_splitting=True):
+    """
+    Preprocess the input text with enhanced splitting for better TTS output.
+    
+    Args:
+        text: Input text to split
+        lang: Language code
+        text_split_length: Maximum length of each split
+        enable_enhanced_splitting: Use enhanced splitting algorithm
+    """
+    # Use enhanced splitting by default for better results
+    if enable_enhanced_splitting:
+        return enhanced_split_sentence_impl(text, lang, text_split_length)
+    
+    # Fallback to original implementation
     text_splits = []
     if text_split_length is not None and len(text) >= text_split_length:
         text_splits.append("")
@@ -66,6 +79,254 @@ def split_sentence(text, lang, text_split_length=250):
         text_splits = [text.lstrip()]
 
     return text_splits
+
+
+def enhanced_split_sentence_impl(text, lang, text_split_length=250, 
+                                preserve_punctuation=True, split_on_comma=True, 
+                                min_sentence_length=30):
+    """
+    Enhanced sentence splitting with better handling of punctuation and natural breaks.
+    """
+    text_splits = []
+    
+    # Handle empty or very short text
+    if not text or len(text.strip()) == 0:
+        return []
+    
+    # For CJK languages, use different splitting logic
+    cjk_langs = ['zh', 'ja', 'ko', 'zh-cn', 'zh-tw']
+    is_cjk = any(lang.lower().startswith(l) for l in cjk_langs)
+    
+    if is_cjk:
+        return _split_cjk_text(text, text_split_length)
+    
+    # Clean text but preserve punctuation
+    text = text.strip()
+    if not preserve_punctuation:
+        text = re.sub(r'([.!?;:,])\1+', r'\1', text)  # Remove repeated punctuation
+    
+    if text_split_length is not None and len(text) >= text_split_length:
+        nlp = get_spacy_lang(lang)
+        nlp.add_pipe("sentencizer")
+        doc = nlp(text)
+        
+        current_chunk = ""
+        for sentence in doc.sents:
+            sentence_text = str(sentence).strip()
+            
+            if not sentence_text:
+                continue
+            
+            # If adding this sentence would exceed the limit
+            if current_chunk and len(current_chunk) + len(sentence_text) + 1 > text_split_length:
+                # Save current chunk if it meets minimum length
+                if len(current_chunk) >= min_sentence_length:
+                    text_splits.append(current_chunk)
+                    current_chunk = sentence_text
+                else:
+                    # If current chunk is too short, try to add it anyway
+                    if len(current_chunk) + len(sentence_text) + 1 <= text_split_length * 1.2:
+                        current_chunk += " " + sentence_text
+                    else:
+                        text_splits.append(current_chunk)
+                        current_chunk = sentence_text
+            # If sentence itself is longer than limit
+            elif len(sentence_text) > text_split_length:
+                # Save current chunk if exists
+                if current_chunk:
+                    text_splits.append(current_chunk)
+                    current_chunk = ""
+                
+                # Split long sentence on natural boundaries
+                if split_on_comma:
+                    sub_sentences = _split_on_punctuation(sentence_text, text_split_length)
+                    text_splits.extend(sub_sentences[:-1])
+                    current_chunk = sub_sentences[-1] if sub_sentences else ""
+                else:
+                    # Use textwrap for very long sentences without natural breaks
+                    for line in textwrap.wrap(
+                        sentence_text,
+                        width=text_split_length,
+                        drop_whitespace=True,
+                        break_on_hyphens=False,
+                        break_long_words=False,
+                        tabsize=1,
+                    ):
+                        if line:
+                            text_splits.append(line)
+                    current_chunk = ""
+            else:
+                # Add sentence to current chunk
+                if current_chunk:
+                    current_chunk += " " + sentence_text
+                else:
+                    current_chunk = sentence_text
+        
+        # Don't forget the last chunk
+        if current_chunk:
+            text_splits.append(current_chunk)
+    else:
+        # Text is short enough, return as is
+        text_splits = [text]
+    
+    # Clean up and validate splits
+    text_splits = [s.strip() for s in text_splits if s.strip()]
+    
+    # Merge very short segments
+    text_splits = _merge_short_segments(text_splits, min_sentence_length, text_split_length)
+    
+    return text_splits
+
+
+def _split_on_punctuation(text, max_length):
+    """Split text on punctuation marks for more natural breaks."""
+    segments = []
+    current = ""
+    
+    # Process text character by character
+    words = text.split()
+    for word_idx, word in enumerate(words):
+        # Check if adding this word would exceed max_length
+        test_length = len(current) + (1 if current else 0) + len(word)
+        
+        if test_length > max_length:
+            # Look back for punctuation marks from max_length-1 position
+            if current:
+                # Start from position max_length-1 and look back to 50% of max_length
+                lookback_end = min(len(current), max_length - 1)  # Start from 249 for max_length=250
+                lookback_start = int(max_length * 0.5)  # Look back to 50% (125 for max_length=250)
+                best_break = -1
+                
+                # Priority 1: sentence endings (.!?)
+                for i in range(lookback_end, lookback_start - 1, -1):
+                    if i < len(current) and current[i] in '.!?' and i + 1 < len(current) and current[i + 1] == ' ':
+                        best_break = i + 1
+                        break
+                
+                # Priority 2: semicolon or colon
+                if best_break == -1:
+                    for i in range(lookback_end, lookback_start - 1, -1):
+                        if i < len(current) and current[i] in ';:' and i + 1 < len(current) and current[i + 1] == ' ':
+                            best_break = i + 1
+                            break
+                
+                # Priority 3: comma
+                if best_break == -1:
+                    for i in range(lookback_end, lookback_start - 1, -1):
+                        if i < len(current) and current[i] == ',' and i + 1 < len(current) and current[i + 1] == ' ':
+                            best_break = i + 1
+                            break
+                
+                # Priority 4: dash
+                if best_break == -1:
+                    for i in range(lookback_end, lookback_start - 1, -1):
+                        if i < len(current) and i + 1 < len(current) and current[i:i+2] in ['--', '—'] and i + 2 < len(current) and current[i + 2] == ' ':
+                            best_break = i + 2
+                            break
+                
+                # If found a break point, use it
+                if best_break > 0:
+                    segments.append(current[:best_break].strip())
+                    current = current[best_break:].strip()
+                    # Add the new word to current
+                    current = current + " " + word if current else word
+                else:
+                    # No punctuation found, break at word boundary before max_length
+                    segments.append(current.strip())
+                    current = word
+            else:
+                current = word
+        else:
+            # Add word to current chunk
+            current = current + " " + word if current else word
+    
+    # Add remaining text
+    if current.strip():
+        segments.append(current.strip())
+    
+    return segments
+
+
+def _split_cjk_text(text, max_length):
+    """Special handling for Chinese, Japanese, and Korean text."""
+    # CJK punctuation marks - support both Chinese and English punctuation
+    cjk_sentence_endings = '。！？；.!?;'
+    cjk_pause_marks = '，、,'
+    
+    segments = []
+    current = ""
+    
+    for i, char in enumerate(text):
+        current += char
+        
+        # Check if we're at max length - look back for a good break point
+        if len(current) >= max_length:
+            # Try to find a good break point from max_length back to 50% of max_length
+            lookback_start = int(max_length * 0.5)  # Look back to 50% (41 chars for Chinese)
+            lookback_end = min(len(current), max_length)  # Start from max_length position
+            best_break = -1
+            
+            # First priority: sentence endings
+            for j in range(lookback_end - 1, lookback_start - 1, -1):
+                if j < len(current) and current[j] in cjk_sentence_endings:
+                    best_break = j + 1
+                    break
+            
+            # Second priority: pause marks (commas)
+            if best_break == -1:
+                for j in range(lookback_end - 1, lookback_start - 1, -1):
+                    if j < len(current) and current[j] in cjk_pause_marks:
+                        best_break = j + 1
+                        break
+            
+            # If found a good break point, use it
+            if best_break > 0:
+                segments.append(current[:best_break].strip())
+                current = current[best_break:].strip()
+            else:
+                # No good break point found, force split at max_length
+                segments.append(current[:max_length].strip())
+                current = current[max_length:].strip()
+        
+        # Check for natural sentence endings (can break earlier if it makes sense)
+        elif char in cjk_sentence_endings:
+            if len(current) >= max_length * 0.5:  # At least half the max length
+                segments.append(current.strip())
+                current = ""
+        # Check for pause marks if current segment is getting long
+        elif char in cjk_pause_marks and len(current) >= max_length * 0.85:
+            segments.append(current.strip())
+            current = ""
+    
+    # Add remaining text
+    if current.strip():
+        segments.append(current.strip())
+    
+    return segments
+
+
+def _merge_short_segments(segments, min_length, max_length):
+    """Merge segments that are too short with adjacent segments."""
+    if not segments:
+        return segments
+    
+    merged = []
+    current = segments[0]
+    
+    for segment in segments[1:]:
+        # Try to merge with current if both are short enough
+        if len(current) < min_length and len(current) + len(segment) + 1 <= max_length:
+            current += " " + segment
+        elif len(segment) < min_length and len(current) + len(segment) + 1 <= max_length:
+            current += " " + segment
+        else:
+            merged.append(current)
+            current = segment
+    
+    if current:
+        merged.append(current)
+    
+    return merged
 
 
 _whitespace_re = re.compile(r"\s+")
