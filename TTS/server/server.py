@@ -4,6 +4,7 @@ import io
 import json
 import os
 import sys
+import tempfile
 from pathlib import Path
 from threading import Lock
 from typing import Union
@@ -14,6 +15,84 @@ from flask import Flask, render_template, render_template_string, request, send_
 from TTS.config import load_config
 from TTS.utils.manage import ModelManager
 from TTS.utils.synthesizer import Synthesizer
+from TTS.server.text_splitter import TextSplitter
+
+# 导入scipy.io.wavfile进行高效音频处理
+import numpy as np
+from scipy.io import wavfile
+print(" > Using scipy.io.wavfile for fast audio concatenation")
+
+
+def concatenate_with_scipy(audio_segments, synthesizer_instance, silence_duration=50):
+    """
+    使用scipy.io.wavfile进行高效音频拼接
+    
+    Args:
+        audio_segments: List of audio data from synthesizer.tts()
+        synthesizer_instance: Synthesizer实例，用于获取采样率
+        silence_duration: 静音间隔（毫秒）
+    
+    Returns:
+        bytes: 完整的WAV文件字节数据
+    """
+    if not audio_segments:
+        return b""
+    
+    if len(audio_segments) == 1:
+        # 单个片段，直接保存
+        out = io.BytesIO()
+        synthesizer_instance.save_wav(audio_segments[0], out)
+        return out.getvalue()
+    
+    print(f" > Using scipy.io.wavfile for fast concatenation of {len(audio_segments)} segments")
+    
+    temp_files = []
+    audio_arrays = []
+    sample_rate = None
+    
+    try:
+        # 将每个片段保存为临时WAV文件并用scipy读取
+        for i, segment in enumerate(audio_segments):
+            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=f"_segment_{i}.wav")
+            synthesizer_instance.save_wav(segment, temp_file.name)
+            temp_files.append(temp_file.name)
+            
+            # 用scipy.io.wavfile读取
+            sr, audio_data = wavfile.read(temp_file.name)
+            audio_arrays.append(audio_data)
+            
+            if sample_rate is None:
+                sample_rate = sr
+            elif sample_rate != sr:
+                print(f" > WARNING: Sample rate mismatch {sample_rate}Hz vs {sr}Hz")
+            
+            print(f" >   Loaded segment {i+1}: {len(audio_data)} samples at {sr}Hz")
+        
+        # 直接拼接numpy数组（基于测试，direct方式效果最好）
+        combined = np.concatenate(audio_arrays)
+        
+        # 保存为临时文件再读取为字节数据
+        output_temp = tempfile.NamedTemporaryFile(delete=False, suffix="_combined.wav")
+        wavfile.write(output_temp.name, sample_rate, combined)
+        temp_files.append(output_temp.name)
+        
+        # 读取文件为字节数据
+        with open(output_temp.name, 'rb') as f:
+            result_bytes = f.read()
+        
+        total_duration = len(combined) / sample_rate
+        print(f" > Concatenation complete: {len(combined)} samples ({total_duration:.2f}s)")
+        return result_bytes
+        
+    finally:
+        # 清理临时文件
+        for temp_file in temp_files:
+            try:
+                os.unlink(temp_file)
+            except:
+                pass
+
+
 
 
 def create_argparser():
@@ -180,17 +259,17 @@ def index():
 
 @app.route("/details")
 def details():
-    if args.config_path is not None and os.path.isfile(args.config_path):
-        model_config = load_config(args.config_path)
-    else:
-        if args.model_name is not None:
+    model_config = load_config(config_path) if config_path else {}
+    if model_config:
+        if config_path:
             model_config = load_config(config_path)
+            model_config = model_config.to_dict()
 
-    if args.vocoder_config_path is not None and os.path.isfile(args.vocoder_config_path):
-        vocoder_config = load_config(args.vocoder_config_path)
-    else:
-        if args.vocoder_name is not None:
+        vocoder_config = None
+        if vocoder_config_path:
             vocoder_config = load_config(vocoder_config_path)
+            if vocoder_config:
+                vocoder_config = vocoder_config.to_dict()
         else:
             vocoder_config = None
 
@@ -218,40 +297,67 @@ def tts():
         print(f" > Model input: {text}")
         print(f" > Speaker Idx: {speaker_idx}")
         print(f" > Language Idx: {language_idx}")
-        print(f" > use_multi_speaker: {use_multi_speaker}")
-        print(f" > use_multi_language: {use_multi_language}")
+        print(f" > Text length: {len(text)} characters")
         
-        # 根据模型类型决定如何调用
-        # 检查是否是XTTS模型（通过config路径或者模型名称）
+        # 检查是否是XTTS模型
         is_xtts_model = False
         if args.model_path and args.config_path:
             is_xtts_model = "xtts" in args.config_path.lower()
         elif args.model_name:
             is_xtts_model = "xtts" in args.model_name.lower()
             
-        if is_xtts_model:
-            # XTTS模型 - 需要speaker和language参数（即使为空）
-            wavs = synthesizer.tts(text, speaker_name=speaker_idx, language_name=language_idx, style_wav=style_wav)
+        if is_xtts_model and len(text) > 250:
+            # XTTS模型长文本处理：智能分段 + 专业拼接
+            print(f" > XTTS long text detected ({len(text)} chars), using smart segmentation")
+            
+            splitter = TextSplitter(max_length=250)
+            segments = splitter.smart_split(text, language_hint=language_idx)
+            
+            all_wavs = []
+            for i, (segment_text, detected_lang) in enumerate(segments):
+                print(f" > Generating segment {i+1}/{len(segments)}: {len(segment_text)} chars")
+                
+                # 使用检测到的语言，如果没有则使用原始language_idx
+                segment_lang = language_idx if language_idx else detected_lang
+                
+                segment_wav = synthesizer.tts(
+                    text=segment_text,
+                    speaker_name=speaker_idx,
+                    language_name=segment_lang,
+                    style_wav=style_wav
+                )
+                all_wavs.append(segment_wav)
+            
+            # 使用scipy.io.wavfile进行高效拼接
+            wav_data = concatenate_with_scipy(all_wavs, synthesizer)
+            return send_file(io.BytesIO(wav_data), mimetype="audio/wav")
+                
         else:
-            # 其他模型 - 动态构建参数
-            tts_kwargs = {"text": text}
-            
-            # 只在多说话人模型且有speaker_idx时传递speaker参数
-            if use_multi_speaker and speaker_idx:
-                tts_kwargs["speaker_name"] = speaker_idx
+            # 短文本或非XTTS模型：直接处理
+            if is_xtts_model:
+                wavs = synthesizer.tts(text, speaker_name=speaker_idx, language_name=language_idx, style_wav=style_wav)
+            else:
+                # 其他模型 - 动态构建参数
+                tts_kwargs = {"text": text}
                 
-            # 只在多语言模型且有language_idx时传递language参数
-            if use_multi_language and language_idx:
-                tts_kwargs["language_name"] = language_idx
+                # 只在多说话人模型且有speaker_idx时传递speaker参数
+                if use_multi_speaker and speaker_idx:
+                    tts_kwargs["speaker_name"] = speaker_idx
+                    
+                # 只在多语言模型且有language_idx时传递language参数
+                if use_multi_language and language_idx:
+                    tts_kwargs["language_name"] = language_idx
+                    
+                # style_wav可以总是传递（如果不为None）
+                if style_wav:
+                    tts_kwargs["style_wav"] = style_wav
                 
-            # style_wav可以总是传递（如果不为None）
-            if style_wav:
-                tts_kwargs["style_wav"] = style_wav
-            
-            wavs = synthesizer.tts(**tts_kwargs)
+                wavs = synthesizer.tts(**tts_kwargs)
+        
+        # 标准输出流程
         out = io.BytesIO()
         synthesizer.save_wav(wavs, out)
-    return send_file(out, mimetype="audio/wav")
+        return send_file(out, mimetype="audio/wav")
 
 
 @app.route("/api/tts_with_clone", methods=["POST"])
@@ -271,9 +377,6 @@ def tts_with_clone():
             return "No audio file provided", 400
         
         # Save uploaded file temporarily
-        import tempfile
-        import os
-        
         with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp_file:
             speaker_wav_file.save(tmp_file.name)
             temp_filename = tmp_file.name
@@ -282,18 +385,50 @@ def tts_with_clone():
             print(f" > Model input: {text}")
             print(f" > Language: {language_idx}")
             print(f" > Voice clone from: {speaker_wav_file.filename}")
+            print(f" > Text length: {len(text)} characters")
             
-            # Use the uploaded audio file for voice cloning
-            wavs = synthesizer.tts(
-                text=text, 
-                language_name=language_idx,
-                speaker_wav=temp_filename,  # Path to the uploaded audio file
-                speaker_name=None  # Don't use preset speaker when cloning
-            )
+            # 检查是否是XTTS模型
+            is_xtts_model = False
+            if args.model_path and args.config_path:
+                is_xtts_model = "xtts" in args.config_path.lower()
+            elif args.model_name:
+                is_xtts_model = "xtts" in args.model_name.lower()
+                
+            if is_xtts_model and len(text) > 250:
+                # XTTS模型长文本语音克隆
+                print(f" > XTTS long text voice cloning ({len(text)} chars)")
+                
+                splitter = TextSplitter(max_length=250)
+                segments = splitter.smart_split(text, language_hint=language_idx)
+                
+                all_wavs = []
+                for i, (segment_text, detected_lang) in enumerate(segments):
+                    print(f" > Cloning segment {i+1}/{len(segments)}: {len(segment_text)} chars")
+                    
+                    segment_lang = language_idx if language_idx else detected_lang
+                    
+                    segment_wav = synthesizer.tts(
+                        text=segment_text,
+                        language_name=segment_lang,
+                        speaker_wav=temp_filename,
+                        speaker_name=None
+                    )
+                    all_wavs.append(segment_wav)
+                
+                # 使用scipy.io.wavfile进行高效拼接
+                wav_data = concatenate_with_scipy(all_wavs, synthesizer)
+                return send_file(io.BytesIO(wav_data), mimetype="audio/wav")
+            else:
+                # 短文本或非XTTS模型直接处理
+                wavs = synthesizer.tts(
+                    text=text, 
+                    language_name=language_idx,
+                    speaker_wav=temp_filename,
+                    speaker_name=None
+                )
             
             out = io.BytesIO()
             synthesizer.save_wav(wavs, out)
-            
             return send_file(out, mimetype="audio/wav")
             
         finally:
@@ -347,6 +482,28 @@ def mary_tts_api_process():
 
 
 def main():
+    print("=" * 60)
+    print("🚀 Enhanced TTS Server with XTTS Long Text Support")
+    print("=" * 60)
+    print(f" > Model: {args.model_name or args.model_path}")
+    
+    # 检查是否是XTTS模型
+    is_xtts = False
+    if args.model_path and args.config_path:
+        is_xtts = "xtts" in args.config_path.lower()
+    elif args.model_name:
+        is_xtts = "xtts" in args.model_name.lower()
+    
+    if is_xtts:
+        print(" > ✅ XTTS model detected")
+        print(" > ✅ Smart text segmentation enabled (250 char limit)")
+        print(" > ✅ Fast audio concatenation enabled (scipy.io.wavfile)")
+    else:
+        print(" > ℹ️  Non-XTTS model: standard processing")
+    
+    print(f" > Starting server on port {args.port}")
+    print("=" * 60)
+    
     app.run(debug=args.debug, host="::", port=args.port)
 
 
