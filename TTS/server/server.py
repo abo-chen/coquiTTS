@@ -236,11 +236,13 @@ def index():
         is_xtts = "xtts" in args.config_path.lower()
         is_vctk = False
         is_ljspeech = False
+        is_jenny = False
     else:
         # 使用预训练模型名称判断
         is_xtts = "xtts" in model_name.lower() if model_name else False
         is_vctk = "vctk" in model_name.lower() if model_name else False
         is_ljspeech = "ljspeech" in model_name.lower() if model_name else False
+        is_jenny = "jenny" in model_name.lower() if model_name else False
     
     return render_template(
         "index.html",
@@ -254,6 +256,7 @@ def index():
         is_xtts=is_xtts,
         is_vctk=is_vctk,
         is_ljspeech=is_ljspeech,
+        is_jenny=is_jenny,
     )
 
 
